@@ -17,7 +17,8 @@
      AtomicLong]
     [java.util
      ArrayList
-     Date]
+     Date
+     TimeZone]
     [java.text
      SimpleDateFormat]
     [java.lang.ref
@@ -112,7 +113,7 @@
 (defn- current-file-count
   "Returns the number of pre-existing complete and pending uploads in the directory for
    the given hostname."
-  [q id client bucket dir]
+  [q id ^AtomicLong enqueued-counter client bucket dir]
   (let [prefix (str dir "/" id)]
     (max
 
@@ -126,7 +127,14 @@
       ;; pending writes
       (let [tasks (q/immediate-task-seq q :s3)
             highest-part (->> tasks
-                           (map #(try @% (catch Throwable e nil)))
+                           (map (fn [task]
+                                  (try
+                                    (let [[action _ count :as descriptor] @task]
+                                      (when (= :upload action)
+                                        (.addAndGet enqueued-counter count))
+                                      descriptor)
+                                    (catch Throwable e
+                                      nil))))
                            (map second)
                            (filter #(= dir (last %)))
                            (map second)
@@ -135,12 +143,14 @@
           (q/retry! t))
         (long (Math/ceil (/ highest-part s3/max-parts)))))))
 
-(defn- format->directory
-  "Returns the directory location for the current time."
-  [directory-format]
-  (.format
-    (SimpleDateFormat. directory-format)
-    (Date.)))
+(let [utc (TimeZone/getTimeZone "UTC")]
+  (defn- format->directory
+    "Returns the directory location for the current time."
+    [directory-format]
+    (.format
+      (doto (SimpleDateFormat. directory-format)
+        (.setTimeZone utc))
+      (Date.))))
 
 ;;; utility functions for inner loop
 
@@ -432,12 +442,12 @@
         q (q/queues local-directory
             {:fsync-put? fsync?})
         initial-directory (format->directory s3-directory-format)
+        enqueued-counter (AtomicLong. 0)
+        uploaded-counter (AtomicLong. 0)
         pos (atom
               [0
-               (* s3/max-parts (current-file-count q id c s3-bucket initial-directory))
+               (* s3/max-parts (current-file-count q id enqueued-counter c s3-bucket initial-directory))
                initial-directory])
-        enqueue-counter (AtomicLong. 0)
-        upload-counter (AtomicLong. 0)
         pre-action? #(#{:start} (first %))
         pre-q (batching-queue
                 max-batch-size
@@ -458,21 +468,23 @@
 
     (let [consume-loop (future
                          (try
-                           (start-consume-loop id q c s3-bucket prefix upload-counter close-latch)
+                           (start-consume-loop id q c s3-bucket prefix uploaded-counter close-latch)
                            (catch Throwable e
                              (log/warn e "error in journal loop"))))]
 
       ;; consumer loop
       (reify IExecutor
         (stats [_]
-          {:enqueued (.get enqueue-counter)
-           :uploaded (.get upload-counter)
-           :queue (get (q/stats q) "s3")})
+          (let [uploaded (.get uploaded-counter)
+                enqueued (.get enqueued-counter)]
+            {:enqueued enqueued
+             :uploaded uploaded
+             :queue (get (q/stats q) "s3")}))
         (submit! [_ x]
           (if @close-latch
             (throw (IllegalStateException. "attempting to write to a closed journal"))
             (do
-              (.incrementAndGet enqueue-counter)
+              (.incrementAndGet enqueued-counter)
               (submit! pre-q x))))
         Closeable
         (close [_]
