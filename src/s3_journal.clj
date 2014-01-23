@@ -96,8 +96,10 @@
       second
       (str/replace #"/" "_"))))
 
-(defn- position->file [id [_ part dir]]
-  (str dir "/" id "-" (format "%06d" (int (/ part s3/max-parts))) ".journal"))
+(defn- position->file [id suffix [_ part dir]]
+  (str dir "/" id "-" (format "%06d" (int (/ part s3/max-parts)))
+    ".journal"
+    (when suffix (str "." suffix))))
 
 (defn- file->position [path]
   (when-let [[dir n] (rest (re-find #"(.*)/.*-(\d+)\.journal" path))]
@@ -130,7 +132,7 @@
                            (map (fn [task]
                                   (try
                                     (let [[action _ count :as descriptor] @task]
-                                      (when (= :upload action)
+                                      (when (= :conj action)
                                         (.addAndGet enqueued-counter count))
                                       descriptor)
                                     (catch Throwable e
@@ -275,6 +277,7 @@
    client          ; s3 client
    bucket          ; s3 bucket
    prefix          ; the unique prefix for this journal (typically only used when sharding)
+   suffix          ; the file suffix (nil by default)
    upload-counter  ; atomic long for tracking entry uploading
    close-latch     ; an atom which marks whether the loop should be closed
    ]
@@ -338,7 +341,7 @@
                                          (or
                                            (try
                                              (s3/init-multipart client bucket
-                                               (position->file id [0 part dir]))
+                                               (position->file id suffix [0 part dir]))
                                              (catch Throwable e
                                                ;; we can't proceed until this succeeds, so
                                                ;; retrying isn't a valid option
@@ -411,6 +414,7 @@
      compressor
      delimiter
      fsync?
+     suffix
      max-batch-latency
      max-batch-size
      id]
@@ -427,6 +431,12 @@
   (.mkdirs (io/file local-directory))
   
   (let [prefix (second (re-find #"^'(.*)'" s3-directory-format))
+        suffix (or suffix
+                 (case compressor
+                   :gzip "gz"
+                   :snappy "snappy"
+                   :lzma2 "xz"
+                   nil))
         delimiter (bs/to-byte-array delimiter)
         compressor (if (keyword? compressor)
                      #(bt/compress % compressor)
@@ -468,7 +478,15 @@
 
     (let [consume-loop (future
                          (try
-                           (start-consume-loop id q c s3-bucket prefix uploaded-counter close-latch)
+                           (start-consume-loop
+                             id
+                             q
+                             c
+                             s3-bucket
+                             prefix
+                             suffix
+                             uploaded-counter
+                             close-latch)
                            (catch Throwable e
                              (log/warn e "error in journal loop"))))]
 
@@ -513,6 +531,7 @@
      max-batch-latency
      max-batch-size
      id
+     suffix
      shards]
     :or {delimiter "\n"
          encoder bs/to-byte-array
