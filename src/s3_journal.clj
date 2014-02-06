@@ -398,6 +398,7 @@
                     ))
                 (catch Throwable e
                   (log/info e "error in task consumption")
+                  (Thread/sleep 1000)
                   (q/retry! task)
                   upload-state)))))))))
 
@@ -435,7 +436,7 @@
                  (case compressor
                    :gzip "gz"
                    :snappy "snappy"
-                   :lzma2 "xz"
+                   :bzip2 "bz2"
                    nil))
         delimiter (bs/to-byte-array delimiter)
         compressor (if (keyword? compressor)
