@@ -164,7 +164,7 @@
         add-actions! #(apply swap! actions conj %&)
         directory' (format->directory directory-format)
         pos' (if (not= directory directory')
-               
+
                ;; we've moved to a new directory, so close up previous upload and roll over
                (let [pos' [chunk-size 0 directory']]
                  (add-actions! [:end pos] [:start pos'])
@@ -187,7 +187,7 @@
                  ;; we've hit the minimum part size threshold, upload the part
                  (when (> bytes' s3/min-part-size)
                    (add-actions! [:upload pos']))
-                 
+
                  pos'))]
     [pos' @actions]))
 
@@ -251,24 +251,24 @@
           bytes (map #(nth % 3) task-descriptors)
           descriptor (upload-descriptor upload-state part dir)]
       (try
-        
+
         (let [rsp (s3/upload-part client
                     descriptor
                     (inc (rem part s3/max-parts))
                     bytes
                     last?)]
-          
+
           (doseq [t tasks]
             (q/complete! t))
 
           (.addAndGet upload-counter (reduce + counts))
-          
+
           (assoc-in-state upload-state part dir [:parts part] rsp))
-        
+
         (catch Throwable e
-          
+
           (log/info e "error uploading part")
-          
+
           upload-state)))))
 
 (defn- start-consume-loop
@@ -282,10 +282,10 @@
    close-latch     ; an atom which marks whether the loop should be closed
    ]
   (let [upload-state (initial-upload-state id client bucket prefix)]
-    
+
     (doseq [upload (keys upload-state)]
       (q/put! q :s3 [:end (cons 0 upload)]))
-    
+
     (loop [upload-state upload-state]
       (let [task (try
                    (if @close-latch
@@ -304,12 +304,12 @@
             (recur
               (try
                 (if-not (or (#{:start :flush} action) descriptor)
-                  
+
                   ;; the upload this is for no longer is valid, just drop it
                   (do
                     (q/complete! task)
                     upload-state)
-                  
+
                   (case action
 
                     :flush
@@ -318,13 +318,13 @@
                         (q/put! q :s3 [:end [0 part dir]]))
                       (q/complete! task)
                       upload-state)
-                    
+
                     ;; new batch of bytes for the part
                     :conj
                     (let [[bytes] params]
                       (update-in-state upload-state part dir [:parts part :tasks]
                         #(conj (or % []) task)))
-                    
+
                     ;; actually upload the part
                     :upload
                     (let [upload-state' (upload-part client upload-counter upload-state part dir false)]
@@ -368,9 +368,9 @@
                                                 (upload-part client upload-counter upload-state part' dir true))))
                                           upload-state)
                           parts' (get-in-state upload-state' part dir [:parts])]
-                      
+
                       (if upload-state'
-                        
+
                         ;; we only had one remaining part, check if it was uploaded
                         (if (->> parts' vals (every? :uploaded?))
 
@@ -426,17 +426,18 @@
          fsync? true
          max-batch-latency (* 1000 60)
          s3-directory-format "yyyy/MM/dd"}}]
-  
+
   (assert local-directory "must define :local-directory for buffering the journal")
 
   (.mkdirs (io/file local-directory))
-  
+
   (let [prefix (second (re-find #"^'(.*)'" s3-directory-format))
         suffix (or suffix
                  (case compressor
                    :gzip "gz"
                    :snappy "snappy"
                    :bzip2 "bz2"
+                   :lzo "lzo"
                    nil))
         delimiter (bs/to-byte-array delimiter)
         compressor (if (keyword? compressor)
