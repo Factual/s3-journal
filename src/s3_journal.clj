@@ -40,7 +40,9 @@
     [com.amazonaws.auth
      BasicAWSCredentials]
     [com.amazonaws.services.s3
-     AmazonS3Client]))
+     AmazonS3Client]
+    [com.amazonaws
+     AmazonServiceException]))
 
 ;;;
 
@@ -106,11 +108,13 @@
     [0 (* s3/max-parts (Long/parseLong n)) dir]))
 
 (defn- open-uploads
-  [id client bucket prefix]
-  (let [re (re-pattern (str id "-(\\d+)\\.journal"))]
-    (filter
-      #(re-find re (second %))
-      (s3/multipart-uploads client bucket prefix))))
+  ([client bucket prefix]
+     (open-uploads ".*" client bucket prefix))
+  ([id client bucket prefix]
+     (let [re (re-pattern (str id "-(\\d+)\\.journal"))]
+       (filter
+         #(re-find re (second %))
+         (s3/multipart-uploads client bucket prefix)))))
 
 (defn- current-file-count
   "Returns the number of pre-existing complete and pending uploads in the directory for
@@ -155,6 +159,44 @@
       (Date.))))
 
 ;;; utility functions for inner loop
+
+(defn- cleanup-expired-uploads
+  "Identifies any open uploads which are more than `expiration` milliseconds old, and closes them out."
+  [client bucket date-format expiration]
+  (let [date-format (doto (SimpleDateFormat. date-format)
+                      (.setTimeZone (TimeZone/getTimeZone "UTC")))
+        now (System/currentTimeMillis)
+        descriptors (->> (open-uploads client bucket nil)
+                      (filter
+                        (fn [[_ ^String path _]]
+                          (when-let [^String file (second (re-matches #".*(/.*?journal.*)" path))]
+                            (let [path' (.substring path 0 (- (count path) (count file)))]
+                              (try
+                                (when (< expiration (- now (.getTime (.parse date-format path'))))
+                                  true)
+                                (catch Throwable e
+                                  nil)))))))
+        files (map second descriptors)
+        parts (map #(s3/parts client %) descriptors)]
+
+    (doseq [[d ps] (map list descriptors parts)]
+      (try
+        (s3/end-multipart client ps d)
+        (catch AmazonServiceException e
+          (case (.getStatusCode e)
+
+            404
+            nil
+
+            403
+            (try
+              (s3/abort-multipart client d)
+              (catch Throwable e
+                (log/warn e "error cleaning up old uploads")))
+
+            (log/warn e "error cleaning up old uploads")))
+        (catch Throwable e
+          (log/warn e "error cleaning up old uploads"))))))
 
 (defn- advance
   "Given a new chunk, returns the location for where it should be appended, and any additional
@@ -279,14 +321,25 @@
    prefix          ; the unique prefix for this journal (typically only used when sharding)
    suffix          ; the file suffix (nil by default)
    upload-counter  ; atomic long for tracking entry uploading
+   cleanup         ; nil, or a function which is periodically called to clean up dangling uploads
    close-latch     ; an atom which marks whether the loop should be closed
    ]
-  (let [upload-state (initial-upload-state id client bucket prefix)]
+  (let [upload-state (initial-upload-state id client bucket prefix)
+        last-cleanup (atom 0)]
 
     (doseq [upload (keys upload-state)]
       (q/put! q :s3 [:end (cons 0 upload)]))
 
     (loop [upload-state upload-state]
+
+      ;; if there's a cleanup function, check if an hour has elapsed since
+      ;; the last time we called it
+      (when cleanup
+        (let [now (System/currentTimeMillis)]
+          (when (> (- now @last-cleanup) (* 1000 60 60))
+            (reset! last-cleanup now)
+            (cleanup client))))
+
       (let [task (try
                    (if @close-latch
                      (q/take! q :s3 5000 ::exhausted)
@@ -418,6 +471,7 @@
      suffix
      max-batch-latency
      max-batch-size
+     expiration
      id]
     :or {delimiter "\n"
          encoder bs/to-byte-array
@@ -488,6 +542,7 @@
                              prefix
                              suffix
                              uploaded-counter
+                             (when expiration #(cleanup-expired-uploads % s3-bucket s3-directory-format expiration))
                              close-latch)
                            (catch Throwable e
                              (log/warn e "error in journal loop"))))]
@@ -532,6 +587,7 @@
      fsync?
      max-batch-latency
      max-batch-size
+     expiration
      id
      suffix
      shards]

@@ -3,7 +3,7 @@
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :profiles {:dev {:dependencies [[org.clojure/clojure "1.5.1"]]}}
-  :dependencies [[com.amazonaws/aws-java-sdk "1.7.5" :exclusions [commons-codec]]
+  :dependencies [[com.amazonaws/aws-java-sdk "1.7.6" :exclusions [commons-codec]]
                  [factual/durable-queue "0.1.1"]
                  [org.clojure/tools.logging "0.2.6"]
                  [byte-transforms "0.1.2"]]

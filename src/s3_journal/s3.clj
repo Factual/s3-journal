@@ -125,20 +125,13 @@
           (->> part->descriptor
             (sort-by first)
             (map
-              (fn [[n {:keys [tag size last?]}]]
-                (when (or last? (> size min-part-size))
-                  (PartETag. (inc n) tag))))
-            (remove nil?)))))
+              (fn [[n {:keys [tag]}]]
+                (PartETag. (inc n) tag)))))))
     (catch AmazonServiceException e
-      (condp = (.getStatusCode e)
+      (case (.getStatusCode e)
 
         404
         nil
-
-        400
-        (do
-          (prn '***** part->descriptor (parts client upload))
-          (throw e))
 
         (throw e)))
     (catch Throwable e
