@@ -8,7 +8,7 @@ This library allows an ordered stream of entries to be uploaded to Amazon's S3 d
 [factual/s3-journal "0.1.0"]
 ```
 
-This library exposes only three functions in the `s3-journal` namespace: `journal`, which constructs a journal object that can be written to, `submit!`, which writes to the journal, and `stats`, which returns information about the state of the journal.
+This library exposes only three functions in the `s3-journal` namespace: `journal`, which constructs a journal object that can be written to, `put!`, which writes to the journal, and `stats`, which returns information about the state of the journal.
 
 All configuration is passed in as a map to `(journal options)`, with the following parameters:
 
@@ -24,11 +24,11 @@ All configuration is passed in as a map to `(journal options)`, with the followi
 | `:delimiter` | no | a delimiter that will be placed between entries, defaults to a newline character |
 | `:max-batch-latency` | yes | a value, in milliseconds, of how long entries should be batched before being written to disk |
 | `:max-batch-size` | yes | the maximum number of entries that can be batched before being written to disk |
-| `:fsync?` | no | describes whether the journal will fsync after writing a batch to disk, defaults to true | 
+| `:fsync?` | no | describes whether the journal will fsync after writing a batch to disk, defaults to true |
 | `:id` | no | a globally unique string describing the journal which is writing to the given location on S3, defaults to the hostname |
 | `:shards` | no | the number of top-level directories within the bucket to split the entries across, useful for high-throughput applications, defaults to `nil` |
 
-Fundamentally, the central tradeoff in these settings are data consistency vs throughput. 
+Fundamentally, the central tradeoff in these settings are data consistency vs throughput.
 
 If we persist each entry as it comes in, our throughput is limited to the number of [IOPS](http://en.wikipedia.org/wiki/IOPS) our hardware can handle.  However, if we can afford to lose small amounts of data (and we almost certainly can, otherwise we'd be writing it to a replicated datastore), we can bound our loss using the `:max-batch-latency` and `:max-batch-size` parameters.  At least one of these parameters must be defined, but usually it's best to define both.  Defining our batch size bounds the amount of memory that can be used by the journal, and defining our batch latency bounds the amount of time that a given entry is susceptible to the process dying.  Setting `:fsync?` to false can greatly increase throughput, but removes any safety guarantees from the other two parameters - use this parameter only if you're sure you know what you're doing.
 
@@ -40,12 +40,12 @@ Calling `(stats journal)` returns a data structure in this form:
 
 ```clj
 {:queue {:in-progress 0
-	     :completed 64 
-	     :retried 1
-	     :enqueued 64 
-	     :num-slabs 1 
-	     :num-active-slabs 1}
- :enqueued 5000000 
+             :completed 64
+             :retried 1
+             :enqueued 64
+             :num-slabs 1
+             :num-active-slabs 1}
+ :enqueued 5000000
  :uploaded 5000000}
 ```
 

@@ -47,7 +47,7 @@
 ;;;
 
 (defprotocol IExecutor
-  (submit! [_ x] "Submits an object for processing.")
+  (put! [_ x] "Enqueues an object for processing.")
   (stats [_] "Returns a description of the state of the journal."))
 
 (defn- batching-queue [max-size max-time callback]
@@ -80,7 +80,7 @@
 
     (reify
       IExecutor
-      (submit! [_ x]
+      (put! [_ x]
         (when-not (.offer q x)
           (reset! marker (now))
           (flush q)
@@ -501,6 +501,7 @@
                   (->> s
                     (map encoder)
                     (mapcat #(vector (bs/to-byte-array %) delimiter))
+                    vec
                     bs/to-byte-array
                     compressor
                     bs/to-byte-array))
@@ -555,12 +556,12 @@
             {:enqueued enqueued
              :uploaded uploaded
              :queue (get (q/stats q) "s3")}))
-        (submit! [_ x]
+        (put! [_ x]
           (if @close-latch
             (throw (IllegalStateException. "attempting to write to a closed journal"))
             (do
               (.incrementAndGet enqueued-counter)
-              (submit! pre-q x))))
+              (put! pre-q x))))
         Closeable
         (close [_]
           (.close ^java.io.Closeable pre-q)
@@ -622,8 +623,8 @@
               (merge
                 (->> stats (map #(dissoc % :queue)) (apply merge-with +))
                 {:queue (->> stats (map :queue) (apply merge-with +))})))
-          (submit! [_ x]
-            (submit!
+          (put! [_ x]
+            (put!
               (journals (rem (.getAndIncrement counter) shards))
               x))
           java.io.Closeable

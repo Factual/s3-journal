@@ -75,7 +75,7 @@
                :max-batch-size 1e5})
           n 5e6]
       (dotimes [i n]
-        (s/submit! j (str (inc i))))
+        (s/put! j (str (inc i))))
       (prn (s/stats j))
       (.close j)
       (prn (s/stats j))
