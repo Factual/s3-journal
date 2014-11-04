@@ -5,7 +5,7 @@ This library allows an ordered stream of entries to be uploaded to Amazon's S3 d
 ### usage
 
 ```clj
-[factual/s3-journal "0.1.0"]
+[factual/s3-journal "0.1.1"]
 ```
 
 This library exposes only three functions in the `s3-journal` namespace: `journal`, which constructs a journal object that can be written to, `put!`, which writes to the journal, and `stats`, which returns information about the state of the journal.
@@ -26,6 +26,7 @@ All configuration is passed in as a map to `(journal options)`, with the followi
 | `:max-batch-size` | yes | the maximum number of entries that can be batched before being written to disk |
 | `:fsync?` | no | describes whether the journal will fsync after writing a batch to disk, defaults to true |
 | `:id` | no | a globally unique string describing the journal which is writing to the given location on S3, defaults to the hostname |
+| `:expiration` | the maximum time, in milliseconds, pending uploads from other processes will be allowed to remain open without being closed by this process.  This prevents orphaned multipart uploads from processes which are permanently shutdown persisting forever in a partially updated state (and thus remaining invisible to normal S3 operations).  By default this is set to `nil`, which deactivates the expiration behavior. |
 | `:shards` | no | the number of top-level directories within the bucket to split the entries across, useful for high-throughput applications, defaults to `nil` |
 
 Fundamentally, the central tradeoff in these settings are data consistency vs throughput.

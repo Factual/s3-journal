@@ -600,6 +600,7 @@
          max-batch-latency (* 1000 60)
          s3-directory-format "yyyy/MM/dd"}
     :as options}]
+  "Creates a journal that will write to S3."
   (if shards
 
     ;; we want to shard the streams
