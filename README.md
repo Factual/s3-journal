@@ -58,6 +58,6 @@ The underlying AWS client libraries will log at the `INFO` level whenever there 
 
 ### license
 
-Copyright © 2013 Factual, Inc.
+Copyright © 2014 Factual, Inc.
 
 Distributed under the Eclipse Public License version 1.0.
