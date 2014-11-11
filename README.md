@@ -2,6 +2,8 @@
 
 This library allows an ordered stream of entries to be uploaded to Amazon's S3 datastore.  It is implemented using Factual's [durable-queue](https://github.com/factual/durable-queue) library, which means that entries will survive process death, and that memory usage will not be affected by stalls in the uploading process.  Despite this, on a `c1.xlarge` AWS instance it can easily journal more than 10k entries/sec, comprising more than 10mb/sec in their compressed serialized form.
 
+However, this is not a distributed or replicated store, and in the case of node failure may lose data.  The amount of data lost will typically be less than 5mb (the minimum upload size allowed by the S3 service), but this library should not be used in any application which cannot tolerate this sort of data loss.  The ideal use case is high-throughput logging, especially where external infrastructure is unavailable or impractical.
+
 ### usage
 
 ```clj
@@ -31,7 +33,7 @@ All configuration is passed in as a map to `(journal options)`, with the followi
 
 Fundamentally, the central tradeoff in these settings are data consistency vs throughput.
 
-If we persist each entry as it comes in, our throughput is limited to the number of [IOPS](http://en.wikipedia.org/wiki/IOPS) our hardware can handle.  However, if we can afford to lose small amounts of data (and we almost certainly can, otherwise we'd be writing it to a replicated datastore), we can bound our loss using the `:max-batch-latency` and `:max-batch-size` parameters.  At least one of these parameters must be defined, but usually it's best to define both.  Defining our batch size bounds the amount of memory that can be used by the journal, and defining our batch latency bounds the amount of time that a given entry is susceptible to the process dying.  Setting `:fsync?` to false can greatly increase throughput, but removes any safety guarantees from the other two parameters - use this parameter only if you're sure you know what you're doing.
+If we persist each entry as it comes in, our throughput is limited to the number of [IOPS](http://en.wikipedia.org/wiki/IOPS) our hardware can handle.  However, if we can afford to lose small amounts of data (and we almost certainly can, otherwise we'd be writing each entry to a replicated store individually, rather than in batch), we can bound our loss using the `:max-batch-latency` and `:max-batch-size` parameters.  At least one of these parameters must be defined, but usually it's best to define both.  Defining our batch size bounds the amount of memory that can be used by the journal, and defining our batch latency bounds the amount of time that a given entry is susceptible to the process dying.  Setting `:fsync?` to false can greatly increase throughput, but removes any safety guarantees from the other two parameters - use this parameter only if you're sure you know what you're doing.
 
 If more than one journal on a given host is writing to the same bucket and directory on S3, a unique identifier for each must be chosen.  This identifier should be consistent across process restarts, so that partial uploads from a previous process can be properly handled.  One approach is to add a prefix to the hostname, which can be determined by `(s3-journal/hostname)`.
 
@@ -41,11 +43,11 @@ Calling `(stats journal)` returns a data structure in this form:
 
 ```clj
 {:queue {:in-progress 0
-             :completed 64
-             :retried 1
-             :enqueued 64
-             :num-slabs 1
-             :num-active-slabs 1}
+         :completed 64
+         :retried 1
+         :enqueued 64
+         :num-slabs 1
+         :num-active-slabs 1}
  :enqueued 5000000
  :uploaded 5000000}
 ```
