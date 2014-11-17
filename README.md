@@ -22,7 +22,7 @@ All configuration is passed in as a map to `(journal options)`, with the followi
 | `:s3-directory-format` | no | the directory format, as a [SimpleDateFormat](http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html) string, should not have leading or trailing slashes, defaults to `yyyy/MM/dd` |
 | `:local-directory` | yes | the directory on the local file system that will be used for queueing, will be created if doesn't already exist |
 | `:encoder` | no | a function that takes an entry and returns something that can be converted to bytes via [byte-streams](https://github.com/ztellman/byte-streams) |
-| `:compressor` | no | Either one of `:gzip`, `:snappy`, `:lzma2`, or a custom function that takes a sequence of byte-arrays and returns a compressed representation |
+| `:compressor` | no | Either one of `:gzip`, `:snappy`, `:lzo`, `:bzip2`, or a custom function that takes a sequence of byte-arrays and returns a compressed representation |
 | `:delimiter` | no | a delimiter that will be placed between entries, defaults to a newline character |
 | `:max-batch-latency` | yes | a value, in milliseconds, of how long entries should be batched before being written to disk |
 | `:max-batch-size` | yes | the maximum number of entries that can be batched before being written to disk |
