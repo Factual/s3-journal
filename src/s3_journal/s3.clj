@@ -95,14 +95,22 @@
   [^AmazonS3Client client [bucket key upload-id] part-number contents last?]
   (let [ary (bs/to-byte-array contents)
         _ (assert (or last? (> (count ary) min-part-size)))
-        rsp (.uploadPart client
-              (doto (UploadPartRequest.)
-                (.setBucketName bucket)
-                (.setKey key)
-                (.setUploadId upload-id)
-                (.setPartNumber part-number)
-                (.setPartSize (count ary))
-                (.setInputStream (bs/to-input-stream (or ary (byte-array 0))))))]
+        rsp (try
+              (.uploadPart client
+                (doto (UploadPartRequest.)
+                  (.setBucketName bucket)
+                  (.setKey key)
+                  (.setUploadId upload-id)
+                  (.setPartNumber part-number)
+                  (.setPartSize (count ary))
+                  (.setInputStream (bs/to-input-stream (or ary (byte-array 0))))))
+                  (catch AmazonServiceException e
+                    (case (.getStatusCode e)
+
+                      404
+                      nil
+
+                      (throw e))))]
     {:tag (.getETag rsp)
      :uploaded? true
      :size (count ary)
@@ -129,6 +137,9 @@
                 (PartETag. (inc n) tag)))))))
     (catch AmazonServiceException e
       (case (.getStatusCode e)
+
+        #_400
+        #_(abort-multipart client upload)
 
         404
         nil
