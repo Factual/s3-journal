@@ -58,8 +58,9 @@
         flush (fn [^LinkedBlockingQueue q]
                 (let [c (ArrayList.)]
                   (.drainTo q c)
-                  (when-not (.isEmpty c)
-                    (locking callback
+                  (locking callback
+                    (if (.isEmpty c)
+                      (callback nil)
                       (callback c)))))]
 
     ;; background loop which cleans itself up if the queue
@@ -374,9 +375,11 @@
 
                     ;; new batch of bytes for the part
                     :conj
-                    (let [[bytes] params]
-                      (update-in-state upload-state part dir [:parts part :tasks]
-                        #(conj (or % []) task)))
+                    (let [[cnt bytes] params]
+                      (if (zero? cnt)
+                        upload-state
+                        (update-in-state upload-state part dir [:parts part :tasks]
+                          #(conj (or % []) task))))
 
                     ;; actually upload the part
                     :upload
@@ -498,13 +501,15 @@
                      #(bt/compress % compressor)
                      compressor)
         ->bytes (fn [s]
-                  (->> s
-                    (map encoder)
-                    (mapcat #(vector (bs/to-byte-array %) delimiter))
-                    vec
-                    bs/to-byte-array
-                    compressor
-                    bs/to-byte-array))
+                  (if (nil? s)
+                    (byte-array 0)
+                    (->> s
+                      (map encoder)
+                      (mapcat #(vector (bs/to-byte-array %) delimiter))
+                      vec
+                      bs/to-byte-array
+                      compressor
+                      bs/to-byte-array)))
         c (s3/client s3-access-key s3-secret-key)
         q (q/queues local-directory
             {:fsync-put? fsync?})
@@ -520,7 +525,7 @@
                 max-batch-size
                 max-batch-latency
                 (fn [s]
-                  (let [bytes (->bytes s)
+                  (let [bytes (or (->bytes s) (byte-array 0))
                         cnt (count s)
                         [pos' actions] (advance @pos s3-directory-format (count bytes))]
                     (reset! pos pos')

@@ -7,7 +7,7 @@ However, this is not a distributed or replicated store, and in the case of node 
 ### usage
 
 ```clj
-[factual/s3-journal "0.1.1"]
+[factual/s3-journal "0.1.2"]
 ```
 
 This library exposes only three functions in the `s3-journal` namespace: `journal`, which constructs a journal object that can be written to, `put!`, which writes to the journal, and `stats`, which returns information about the state of the journal.

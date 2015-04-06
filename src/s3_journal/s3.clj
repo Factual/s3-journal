@@ -17,6 +17,7 @@
      ListMultipartUploadsRequest
      MultipartUpload
      UploadPartRequest
+     UploadPartResult
      InitiateMultipartUploadRequest
      CompleteMultipartUploadRequest
      AbortMultipartUploadRequest]
@@ -111,7 +112,7 @@
                       nil
 
                       (throw e))))]
-    {:tag (.getETag rsp)
+    {:tag (.getETag ^UploadPartResult rsp)
      :uploaded? true
      :size (count ary)
      :last? last?}))
