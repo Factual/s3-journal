@@ -112,7 +112,7 @@
                       nil
 
                       (throw e))))]
-    {:tag (.getETag ^UploadPartResult rsp)
+    {:tag (when rsp (.getETag ^UploadPartResult rsp))
      :uploaded? true
      :size (count ary)
      :last? last?}))

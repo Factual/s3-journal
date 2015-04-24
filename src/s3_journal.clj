@@ -10,7 +10,8 @@
     [clojure.java.io :as io])
   (:import
     [java.util.concurrent
-     LinkedBlockingQueue]
+     LinkedBlockingQueue
+     Semaphore]
     [java.io
      Closeable]
     [java.util.concurrent.atomic
@@ -47,7 +48,7 @@
 ;;;
 
 (defprotocol IExecutor
-  (put! [_ x] "Enqueues an object for processing.")
+  (put! [_ x] "Enqueues an object for processing, returns true if successful, false if the journal is full.")
   (stats [_] "Returns a description of the state of the journal."))
 
 (defn- batching-queue [max-size max-time callback]
@@ -120,7 +121,7 @@
 (defn- current-file-count
   "Returns the number of pre-existing complete and pending uploads in the directory for
    the given hostname."
-  [q id ^AtomicLong enqueued-counter client bucket dir]
+  [q id ^AtomicLong enqueued-counter ^Semaphore semaphore client bucket dir]
   (let [prefix (str dir "/" id)]
     (max
 
@@ -138,6 +139,10 @@
                                   (try
                                     (let [[action _ count :as descriptor] @task]
                                       (when (= :conj action)
+                                        (when-not (.tryAcquire semaphore count)
+                                          (throw
+                                            (IllegalStateException.
+                                              "Insufficient queue size to handle uploads that are already pending")))
                                         (.addAndGet enqueued-counter count))
                                       descriptor)
                                     (catch Throwable e
@@ -285,7 +290,8 @@
       vals
       (recur (inc retries)))))
 
-(defn- upload-part [client ^AtomicLong upload-counter upload-state part dir last?]
+(defn- upload-part
+  [client ^AtomicLong upload-counter ^Semaphore semaphore upload-state part dir last?]
   (if (get-in-state upload-state part dir [:parts part :uploaded?])
     upload-state
     (let [tasks (get-in-state upload-state part dir [:parts part :tasks])
@@ -304,7 +310,9 @@
           (doseq [t tasks]
             (q/complete! t))
 
-          (.addAndGet upload-counter (reduce + counts))
+          (let [num-entries (reduce + counts)]
+            (.addAndGet upload-counter num-entries)
+            (.release semaphore num-entries))
 
           (assoc-in-state upload-state part dir [:parts part] rsp))
 
@@ -322,6 +330,7 @@
    prefix          ; the unique prefix for this journal (typically only used when sharding)
    suffix          ; the file suffix (nil by default)
    upload-counter  ; atomic long for tracking entry uploading
+   semaphore       ; semaphore for controlling maximum pending entries
    cleanup         ; nil, or a function which is periodically called to clean up dangling uploads
    close-latch     ; an atom which marks whether the loop should be closed
    ]
@@ -383,7 +392,7 @@
 
                     ;; actually upload the part
                     :upload
-                    (let [upload-state' (upload-part client upload-counter upload-state part dir false)]
+                    (let [upload-state' (upload-part client upload-counter semaphore upload-state part dir false)]
                       (if (get-in-state upload-state' part dir [:parts part :uploaded?])
                         (q/complete! task)
                         (q/retry! task))
@@ -421,7 +430,7 @@
                                             (let [part' (-> non-uploaded first key)]
                                               (and
                                                 (= (rem part' s3/max-parts) (dec (count parts)))
-                                                (upload-part client upload-counter upload-state part' dir true))))
+                                                (upload-part client upload-counter semaphore upload-state part' dir true))))
                                           upload-state)
                           parts' (get-in-state upload-state' part dir [:parts])]
 
@@ -472,6 +481,7 @@
      delimiter
      fsync?
      suffix
+     max-queue-size
      max-batch-latency
      max-batch-size
      expiration
@@ -481,6 +491,7 @@
          id (hostname)
          compressor identity
          fsync? true
+         max-queue-size Integer/MAX_VALUE
          max-batch-latency (* 1000 60)
          s3-directory-format "yyyy/MM/dd"}}]
 
@@ -516,9 +527,10 @@
         initial-directory (format->directory s3-directory-format)
         enqueued-counter (AtomicLong. 0)
         uploaded-counter (AtomicLong. 0)
+        pending-semaphore (Semaphore. max-queue-size)
         pos (atom
               [0
-               (* s3/max-parts (current-file-count q id enqueued-counter c s3-bucket initial-directory))
+               (* s3/max-parts (current-file-count q id enqueued-counter pending-semaphore c s3-bucket initial-directory))
                initial-directory])
         pre-action? #(#{:start} (first %))
         pre-q (batching-queue
@@ -528,6 +540,7 @@
                   (let [bytes (or (->bytes s) (byte-array 0))
                         cnt (count s)
                         [pos' actions] (advance @pos s3-directory-format (count bytes))]
+                    (.addAndGet enqueued-counter cnt)
                     (reset! pos pos')
                     (doseq [a (filter pre-action? actions)]
                       (q/put! q :s3 a))
@@ -548,6 +561,7 @@
                              prefix
                              suffix
                              uploaded-counter
+                             pending-semaphore
                              (when expiration #(cleanup-expired-uploads % s3-bucket s3-directory-format expiration))
                              close-latch)
                            (catch Throwable e
@@ -564,9 +578,10 @@
         (put! [_ x]
           (if @close-latch
             (throw (IllegalStateException. "attempting to write to a closed journal"))
-            (do
-              (.incrementAndGet enqueued-counter)
-              (put! pre-q x))))
+            (boolean
+              (and
+                (.tryAcquire pending-semaphore)
+                (put! pre-q x)))))
         Closeable
         (close [_]
           (.close ^java.io.Closeable pre-q)
@@ -595,6 +610,7 @@
      max-batch-size
      expiration
      id
+     max-queue-size
      suffix
      shards]
     :or {delimiter "\n"
@@ -603,6 +619,7 @@
          compressor identity
          fsync? true
          max-batch-latency (* 1000 60)
+         max-queue-size Integer/MAX_VALUE
          s3-directory-format "yyyy/MM/dd"}
     :as options}]
   "Creates a journal that will write to S3."
@@ -617,6 +634,8 @@
                          (fn [shard]
                            (journal-
                              (-> options
+                               (update-in [:max-queue-size]
+                                 #(if % (/ % shards) Integer/MAX_VALUE))
                                (update-in [:s3-directory-format]
                                  #(str \' (nth shard-ids shard) "'/" %))
                                (update-in [:local-directory]
