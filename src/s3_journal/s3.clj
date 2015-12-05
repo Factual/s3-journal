@@ -72,17 +72,25 @@
 (defn parts
   "Given a multipart upload descriptor, returns a map of part numbers onto etags."
   [^AmazonS3Client client [bucket key upload-id :as upload]]
-  (let [rsp (.listParts client
-              (doto (ListPartsRequest. bucket key upload-id)
-                (.setMaxParts (int 1e5))))]
-    (->> rsp
-      .getParts
-      (map (fn [^PartSummary s]
-             [(dec (.getPartNumber s))
-              {:tag (.getETag s)
-               :size (.getSize s)
-               :uploaded? true}]))
-      (into {}))))
+  (try
+    (let [rsp (.listParts client
+                (doto (ListPartsRequest. bucket key upload-id)
+                  (.setMaxParts (int 1e5))))]
+      (->> rsp
+        .getParts
+        (map (fn [^PartSummary s]
+               [(dec (.getPartNumber s))
+                {:tag (.getETag s)
+                 :size (.getSize s)
+                 :uploaded? true}]))
+        (into {})))
+    (catch AmazonServiceException e
+      (case (.getStatusCode e)
+
+        404
+        nil
+
+        (throw e)))))
 
 (defn init-multipart
   "Creates a new multipart upload at the given `key`."

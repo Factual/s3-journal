@@ -1,5 +1,6 @@
 (ns s3-journal-test
   (:require
+    [clojure.java.shell :as sh]
     [byte-streams :as bs]
     [clojure.test :refer :all]
     [s3-journal :as s]
@@ -62,16 +63,18 @@
 
 (defn run-stress-test [access-key secret-key bucket]
   (with-redefs [s3/max-parts 4]
-    (let [dir "stress-test"
+    (let [s3-dir "stress-test"
+          directory "/tmp/journal-stress-test"
           c (s3/client access-key secret-key)
-          _ (clear-test-folder c bucket (str "0/" dir))
+          _ (clear-test-folder c bucket (str "0/" s3-dir))
+          _ (sh/sh "rm" "-rf" directory)
           j (s/journal
               {:shards 1
                :s3-access-key access-key
                :s3-secret-key secret-key
                :s3-bucket bucket
-               :s3-directory-format (str \' dir \' "/yy/MM/dd/hh/mm")
-               :local-directory "/tmp/journal-stress-test"
+               :s3-directory-format (str \' s3-dir \' "/yy/MM/dd/hh/mm")
+               :local-directory directory
                :max-batch-size 1e5})
           n 5e6]
       (dotimes [i n]
@@ -80,7 +83,7 @@
       (.close j)
       (prn (s/stats j))
       (=
-        (get-test-object c "journal-test" (str "0/" dir))
+        (get-test-object c "journal-test" (str "0/" s3-dir))
         (map inc (range n))))))
 
 (deftest test-journalling
